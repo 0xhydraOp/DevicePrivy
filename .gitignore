@@ -1,0 +1,21 @@
+# Built files
+build/
+app/build/
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+.gradle/
+
+# Local
+local.properties
+release-key.jks
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

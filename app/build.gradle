@@ -1,0 +1,57 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android" version "1.9.10"
+}
+
+android {
+    namespace "dev.codex.deviceprivy"
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "dev.codex.deviceprivy"
+        minSdk 27
+        targetSdk 33
+        versionCode 52
+        versionName "3.8.0-FINAL"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("../release-key.jks")
+            storePassword "deviceprivacylab"
+            keyAlias "deviceprivacylab"
+            keyPassword "deviceprivacylab"
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+            debuggable false
+        }
+        debug {
+            testCoverageEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+dependencies {
+    compileOnly "de.robv.android.xposed:api:82"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10"
+    testImplementation "junit:junit:4.13.2"
+}
