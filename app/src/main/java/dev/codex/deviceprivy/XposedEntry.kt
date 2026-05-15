@@ -75,8 +75,8 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
         dataFetched = false
         fetchData()
         
-        hookBuildFields(lpparam.classLoader)
-        hookSystemProperties(lpparam.classLoader)
+        try { hookBuildFields(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookSystemProperties(lpparam.classLoader) } catch (_: Throwable) {}
         
         try {
             val instrumentationClass = XposedHelpers.findClass("android.app.Instrumentation", lpparam.classLoader)
@@ -90,37 +90,36 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                             dataFetched = false
                             fetchData(appContext)
                             if (!dataFetched) dataFetched = true
-                            hookBuildFields(lpparam.classLoader)
+                            try { hookBuildFields(lpparam.classLoader) } catch (_: Throwable) {}
                         }
                     }
                 })
         } catch (e: Throwable) {}
 
-        hookTelephony(lpparam.classLoader)
-        hookWifi(lpparam.classLoader)
-        hookWifiDhcp(lpparam.classLoader)
-        hookPhoneStateListener(lpparam.classLoader)
-        hookNetworkInterface(lpparam.classLoader)
-        hookSettings(lpparam.classLoader)
-        hookSharedPreferences(lpparam.classLoader)
-        hookBluetooth(lpparam.classLoader)
-        hookMediaDrm(lpparam.classLoader)
-        hookPackageManager(lpparam.classLoader)
-        hookLocation(lpparam.classLoader)
-        hookDisplay(lpparam.classLoader)
-        hookUserAgent(lpparam.classLoader)
-        hookAAID(lpparam.classLoader)
-        hookGServices(lpparam.classLoader)
-        hookContentResolverQueries(lpparam.classLoader)
-        hookOpenGL(lpparam.classLoader)
-        hookBattery(lpparam.classLoader)
-        hookLocaleAndTimezone(lpparam.classLoader)
-        hookJavaSystemProperties(lpparam.classLoader)
-        // v3.7.5 New Hooks
-        hookLocationFused(lpparam.classLoader)
-        hookLocationLive(lpparam.classLoader)
-        hookAntiXposed(lpparam.classLoader)
-        hookSensors(lpparam.classLoader)
+        try { hookTelephony(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookWifi(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookWifiDhcp(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookPhoneStateListener(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookNetworkInterface(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookSettings(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookSharedPreferences(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookBluetooth(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookMediaDrm(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookPackageManager(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookLocation(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookDisplay(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookUserAgent(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookAAID(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookGServices(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookContentResolverQueries(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookOpenGL(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookBattery(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookLocaleAndTimezone(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookJavaSystemProperties(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookLocationFused(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookLocationLive(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookAntiXposed(lpparam.classLoader) } catch (_: Throwable) {}
+        try { hookSensors(lpparam.classLoader) } catch (_: Throwable) {}
     }
 
     private fun initPrefs() {
@@ -1023,20 +1022,27 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
         // Blocks app detection of Xposed/LSPosed without breaking LSPosed internals.
         val forNameHook = object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
-                val className = param.args[0] as? String ?: return
-                if (!className.contains("xposed", ignoreCase = true) &&
-                    !className.contains("edxposed", ignoreCase = true) &&
-                    !className.contains("lsposed", ignoreCase = true)) return
-                // Allow LSPosed's own internal class loading
-                for (frame in Thread.currentThread().stackTrace) {
-                    val cn = frame.className
-                    if (cn.startsWith("org.lsposed") ||
-                        cn.startsWith("de.robv.android.xposed.XposedBridge") ||
-                        cn.startsWith("de.robv.android.xposed.XposedHelpers")) {
-                        return
+                try {
+                    val className = param.args[0] as? String ?: return
+                    val lower = className.lowercase()
+                    if (!lower.contains("xposed") &&
+                        !lower.contains("edxposed") &&
+                        !lower.contains("lsposed")) return
+                    val trace = Thread.currentThread().stackTrace
+                    for (frame in trace) {
+                        val cn = frame.className
+                        if (cn.startsWith("org.lsposed") ||
+                            cn.startsWith("de.robv.android.xposed.XposedBridge") ||
+                            cn.startsWith("de.robv.android.xposed.XposedHelpers")) {
+                            return
+                        }
                     }
+                    throw ClassNotFoundException(className)
+                } catch (e: ClassNotFoundException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // safety: let original call proceed
                 }
-                throw ClassNotFoundException(className)
             }
         }
         try {
@@ -1107,6 +1113,7 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                                 else -> return  // not a file we care about
                             }
                             
+                            if (filtered.isEmpty() || filtered.isBlank()) return  // keep original
                             val filteredBytes = filtered.toByteArray()
                             val copyLen = minOf(filteredBytes.size, buf.size)
                             System.arraycopy(filteredBytes, 0, buf, 0, copyLen)
