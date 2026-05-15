@@ -34,6 +34,7 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private val PROP_POLL_INTERVAL_MS = 2000L
     private var dataFromUserPrefs = false  // true when data came from XSharedPreferences (user's saved config)
     private var deferredAntiXposed = false // install anti-detection hooks after app init
+    @Volatile private var sysPropsWritten = false  // prevent duplicate su calls across zygotes
 
     override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
         XposedBridge.log("DevicePrivy: initZygote started")
@@ -1221,6 +1222,17 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private val SHARED_FILE = "/data/adb/deviceprivy_data.json"
 
     private fun writeSharedFile() {
+        // Skip if another zygote already wrote SystemProperties recently (prevents duplicate su prompts)
+        try {
+            val spClass = Class.forName("android.os.SystemProperties")
+            val getMethod = spClass.getDeclaredMethod("get", String::class.java, String::class.java)
+            val existing = getMethod.invoke(null, "deviceprivy.refreshed", "") as? String ?: ""
+            if (existing.isNotEmpty()) {
+                val lastWrite = existing.toLongOrNull() ?: 0L
+                if (System.currentTimeMillis() - lastWrite < 120_000L) return // written < 2 min ago
+            }
+        } catch (_: Throwable) {}
+
         // Try writing to SystemProperties via setprop (su -c) as cross-process bridge.
         // Direct SystemProperties.set() is blocked on Android 15, but setprop via root works.
         try {
