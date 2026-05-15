@@ -33,6 +33,7 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private var lastPropPollTime = 0L
     private val PROP_POLL_INTERVAL_MS = 2000L
     private var dataFromUserPrefs = false  // true when data came from XSharedPreferences (user's saved config)
+    private var deferredAntiXposed = false // install anti-detection hooks after app init
 
     override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
         XposedBridge.log("DevicePrivy: initZygote started")
@@ -91,6 +92,12 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                             fetchData(appContext)
                             if (!dataFetched) dataFetched = true
                             try { hookBuildFields(lpparam.classLoader) } catch (_: Throwable) {}
+                            // Install deferred anti-detection hooks AFTER app is fully initialized
+                            if (deferredAntiXposed) {
+                                deferredAntiXposed = false
+                                try { hookAntiXposed(lpparam.classLoader) } catch (_: Throwable) {}
+                                try { hookSensors(lpparam.classLoader) } catch (_: Throwable) {}
+                            }
                         }
                     }
                 })
@@ -118,8 +125,7 @@ class XposedEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
         try { hookJavaSystemProperties(lpparam.classLoader) } catch (_: Throwable) {}
         try { hookLocationFused(lpparam.classLoader) } catch (_: Throwable) {}
         try { hookLocationLive(lpparam.classLoader) } catch (_: Throwable) {}
-        try { hookAntiXposed(lpparam.classLoader) } catch (_: Throwable) {}
-        try { hookSensors(lpparam.classLoader) } catch (_: Throwable) {}
+        deferredAntiXposed = true
     }
 
     private fun initPrefs() {
