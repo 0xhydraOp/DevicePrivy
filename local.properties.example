@@ -1,0 +1,5 @@
+# Copy to local.properties and fill in real values. NEVER commit local.properties.
+# Release keystore lives at DevicePrivacyLab/release-key.jks (gitignored).
+RELEASE_STORE_PASSWORD=change-me
+RELEASE_KEY_PASSWORD=change-me
+RELEASE_KEY_ALIAS=deviceprivacylab

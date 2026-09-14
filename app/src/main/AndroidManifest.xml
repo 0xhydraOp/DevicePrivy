@@ -28,7 +28,7 @@
         <provider
             android:name=".DataProvider"
             android:authorities="dev.codex.deviceprivy.provider"
-            android:exported="true" />
+            android:exported="false" />
     </application>
 
     <queries>

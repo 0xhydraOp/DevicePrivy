@@ -14,6 +14,7 @@ app/build/
 # Local
 local.properties
 release-key.jks
+.commit_counter
 
 # OS
 .DS_Store

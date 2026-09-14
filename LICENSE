@@ -1,0 +1,13 @@
+DevicePrivy Custom License — Approval Required
+Copyright (c) 2026 0xhydraOp
+
+Permission is granted to download and use this software for personal
+privacy testing, provided this notice is retained.
+
+Forking, modifying, redistributing, or publishing derivative works
+REQUIRES prior written approval from the repository owner.
+See README.md. Without such approval, those rights are withheld.
+
+This software hooks system APIs via LSPosed/Xposed and is provided
+"AS IS", without warranty of any kind. Use at your own risk and in
+compliance with applicable laws and app terms of service.

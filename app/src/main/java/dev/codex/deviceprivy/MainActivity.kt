@@ -1,12 +1,17 @@
 package dev.codex.deviceprivy
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
@@ -75,6 +80,64 @@ class MainActivity : Activity() {
     private lateinit var summaryText: TextView
     private lateinit var accordionContainer: LinearLayout
     private val expandedGroups = mutableSetOf(0) // first group open by default
+    private var searchQuery = ""
+    private var dirty = false // true once the user edits anything since load/save
+    private val fieldErrors = mutableMapOf<String, TextView>()
+
+    // ========== Dark-mode aware palette ==========
+
+    private fun isDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun c(light: String, dark: String): Int = Color.parseColor(if (isDark()) dark else light)
+
+    private fun bgColor() = c("#F0F2F5", "#0B1220")
+    private fun panelColor() = c("#FFFFFF", "#1F2937")
+    private fun inputColor() = c("#FFFFFF", "#111827")
+    private fun cardAltColor() = c("#F9FAFB", "#111827")
+    private fun textPrimary() = c("#111827", "#F9FAFB")
+    private fun textSecondary() = c("#374151", "#D1D5DB")
+    private fun textHint() = c("#6B7280", "#9CA3AF")
+    private fun faintColor() = c("#9CA3AF", "#6B7280")
+    private fun dividerColor() = c("#E5E7EB", "#374151")
+    private fun badgeBg() = c("#E5E7EB", "#374151")
+
+    // ========== Validation ==========
+
+    private val macRegex = Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+    private val ipv4Regex = Regex("^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$")
+    private val hex16Regex = Regex("^[0-9a-fA-F]{16}$")
+
+    /** Returns an error message for a non-blank value, or null when valid. Blank = allowed (falls back). */
+    private fun validateField(key: String, raw: String): String? {
+        val v = raw.trim()
+        if (v.isEmpty()) return null
+        return when (key) {
+            "imei" -> if (!v.matches(Regex("^\\d{15}$"))) "Must be 15 digits" else null
+            "meid" -> if (!v.matches(Regex("^\\d{14}$"))) "Must be 14 digits" else null
+            "mac_address", "mac_bssid", "bluetooth_mac" ->
+                if (!v.matches(macRegex)) "Format AA:BB:CC:DD:EE:FF" else null
+            "ip_address" -> if (!v.matches(ipv4Regex)) "Invalid IPv4 address" else null
+            "latitude" -> {
+                val d = v.toDoubleOrNull() ?: return "Must be a number"
+                if (d < -90 || d > 90) "Range -90 … 90" else null
+            }
+            "longitude" -> {
+                val d = v.toDoubleOrNull() ?: return "Must be a number"
+                if (d < -180 || d > 180) "Range -180 … 180" else null
+            }
+            "screen_width", "screen_height", "screen_density" ->
+                if (v.toIntOrNull()?.takeIf { it > 0 } == null) "Must be a positive number" else null
+            "battery_level" -> {
+                val n = v.toIntOrNull() ?: return "Must be 0 … 100"
+                if (n < 0 || n > 100) "Must be 0 … 100" else null
+            }
+            "android_id", "gsf_id" ->
+                if (!v.matches(hex16Regex)) "Must be 16 hex chars" else null
+            "mobile_no" -> if (!v.matches(Regex("^\\+\\d{7,15}$"))) "Format +<country><number>" else null
+            else -> null
+        }
+    }
 
     // ========== Status Detection ==========
 
@@ -100,7 +163,7 @@ class MainActivity : Activity() {
         loadValues()
 
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#F0F2F5"))
+            setBackgroundColor(bgColor())
             isFillViewport = true
         }
         val root = LinearLayout(this).apply {
@@ -123,6 +186,22 @@ class MainActivity : Activity() {
         root.addView(buildAccordionEditor())
         root.addView(spacer(8))
         root.addView(buildFooter())
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshStatusBadge()
+    }
+
+    private fun refreshStatusBadge() {
+        if (!::statusText.isInitialized) return
+        val active = isModuleActive()
+        statusText.text = if (active) "MODULE ACTIVE – Spoofing running" else "MODULE INACTIVE – Reboot needed"
+        statusText.setTextColor(if (active) Color.parseColor("#065F46") else Color.parseColor("#991B1B"))
+        val badge = statusText.parent as? LinearLayout ?: return
+        badge.background = rounded(if (active) Color.parseColor("#ECFDF5") else Color.parseColor("#FEF2F2"), 12)
+        badge.getChildAt(0)?.background =
+            rounded(if (active) Color.parseColor("#10B981") else Color.parseColor("#EF4444"), 999)
     }
 
     // ========== Header ==========
@@ -148,12 +227,12 @@ class MainActivity : Activity() {
                 text = "DevicePrivy"
                 textSize = 22f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.parseColor("#1A1D21"))
+                setTextColor(textPrimary())
             })
             copy.addView(TextView(this@MainActivity).apply {
                 text = "v${BuildConfig.VERSION_NAME}"
                 textSize = 13f
-                setTextColor(Color.parseColor("#6B7280"))
+                setTextColor(textHint())
             })
             addView(copy, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
@@ -235,7 +314,7 @@ class MainActivity : Activity() {
             summaryText = TextView(this@MainActivity).apply {
                 textSize = 16f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.parseColor("#111827"))
+                setTextColor(textPrimary())
                 setLineSpacing(0f, 1.2f)
             }
             nameCol.addView(summaryText)
@@ -254,6 +333,12 @@ class MainActivity : Activity() {
             details.addView(detailRow("WiFi MAC", "mac_address"))
             details.addView(detailRow("Carrier", "sim_operator"))
             addView(details)
+            addView(TextView(this@MainActivity).apply {
+                text = "Tap a value to copy it."
+                textSize = 11f
+                setTextColor(faintColor())
+                setPadding(0, dp(6), 0, 0)
+            })
 
             refreshSummary()
         }
@@ -266,16 +351,28 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = label
                 textSize = 13f
-                setTextColor(Color.parseColor("#6B7280"))
+                setTextColor(textHint())
             }, LinearLayout.LayoutParams(dp(100), LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(TextView(this@MainActivity).apply {
                 tag = "detail_$key"
                 text = displayValue(key, "\u2014")
                 textSize = 14f
                 typeface = Typeface.MONOSPACE
-                setTextColor(Color.parseColor("#374151"))
+                setTextColor(textSecondary())
                 maxLines = 1
                 setHorizontallyScrolling(true)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    val value = displayValue(key, "")
+                    if (value.isBlank() || value == "\u2014") {
+                        Toast.makeText(this@MainActivity, "Nothing to copy", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText(label, value))
+                        Toast.makeText(this@MainActivity, "Copied $label", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
     }
@@ -291,14 +388,14 @@ class MainActivity : Activity() {
             debugLogging = CheckBox(this@MainActivity).apply {
                 text = "Debug logging"
                 textSize = 14f
-                setTextColor(Color.parseColor("#374151"))
+                setTextColor(textSecondary())
                 isChecked = prefs.getBoolean("setting_debug_log", false)
                 setPadding(0, dp(4), 0, dp(4))
             }
             hideSelf = CheckBox(this@MainActivity).apply {
                 text = "Hide module from scoped apps"
                 textSize = 14f
-                setTextColor(Color.parseColor("#374151"))
+                setTextColor(textSecondary())
                 isChecked = prefs.getBoolean("setting_hide_self", true)
                 setPadding(0, dp(4), 0, dp(4))
             }
@@ -316,9 +413,27 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Tap a group to expand and edit its fields."
                 textSize = 12f
-                setTextColor(Color.parseColor("#9CA3AF"))
+                setTextColor(faintColor())
                 setPadding(0, 0, 0, dp(10))
             })
+
+            addView(EditText(this@MainActivity).apply {
+                hint = "\uD83D\uDD0D Search fields…"
+                setSingleLine()
+                textSize = 14f
+                setTextColor(textPrimary())
+                setHintTextColor(faintColor())
+                background = rounded(cardAltColor(), 8)
+                setPadding(dp(12), 0, dp(12), 0)
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                        searchQuery = s?.toString()?.trim().orEmpty()
+                        refreshAccordion()
+                    }
+                    override fun afterTextChanged(s: Editable?) = Unit
+                })
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)).apply { bottomMargin = dp(10) })
 
             accordionContainer = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -336,7 +451,7 @@ class MainActivity : Activity() {
         val isExpanded = index in expandedGroups
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.parseColor("#F9FAFB"), 10)
+            background = rounded(cardAltColor(), 10)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
 
@@ -348,7 +463,7 @@ class MainActivity : Activity() {
             text = if (isExpanded) "▾  ${group.title}" else "▸  ${group.title}"
             textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#374151"))
+            setTextColor(textSecondary())
             tag = "header_$index"
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -356,8 +471,8 @@ class MainActivity : Activity() {
             text = "${group.keys.size}"
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#6B7280"))
-            background = rounded(Color.parseColor("#E5E7EB"), 999)
+            setTextColor(textHint())
+            background = rounded(dividerColor(), 999)
             setPadding(dp(10), dp(2), dp(10), dp(2))
         })
 
@@ -390,27 +505,62 @@ class MainActivity : Activity() {
                 text = label
                 textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.parseColor("#6B7280"))
+                setTextColor(textHint())
                 setPadding(0, dp(10), 0, dp(4))
             })
+            val errorView = TextView(this).apply {
+                textSize = 11f
+                setTextColor(Color.parseColor("#DC2626"))
+                setPadding(0, dp(2), 0, 0)
+                visibility = View.GONE
+            }
+            fieldErrors[key] = errorView
             container.addView(EditText(this).apply {
                 setText(values[key].orEmpty())
                 setSingleLine()
                 textSize = 14f
-                setTextColor(Color.parseColor("#111827"))
+                setTextColor(textPrimary())
                 hint = label
-                background = rounded(Color.WHITE, 8)
+                inputType = inputTypeFor(key)
+                background = rounded(inputColor(), 8)
                 setPadding(dp(12), 0, dp(12), 0)
                 addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                         values[key] = s?.toString().orEmpty()
+                        dirty = true
+                        val err = validateField(key, values[key].orEmpty())
+                        errorView.text = err.orEmpty()
+                        errorView.visibility = if (err == null) View.GONE else View.VISIBLE
                         refreshSummary()
                     }
                     override fun afterTextChanged(s: Editable?) = Unit
                 })
+                val initialErr = validateField(key, values[key].orEmpty())
+                errorView.text = initialErr.orEmpty()
+                errorView.visibility = if (initialErr == null) View.GONE else View.VISIBLE
                 inputs[key] = this
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)))
+            container.addView(errorView)
+        }
+    }
+
+    private fun inputTypeFor(key: String): Int = when (key) {
+        "screen_width", "screen_height", "screen_density", "battery_level", "battery_scale",
+        "imei", "meid", "sim_sub_id" -> InputType.TYPE_CLASS_NUMBER
+        "latitude", "longitude" ->
+            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+        "mobile_no" -> InputType.TYPE_CLASS_PHONE
+        else -> InputType.TYPE_CLASS_TEXT
+    }
+
+    private fun groupMatches(group: FieldGroup): Boolean {
+        if (searchQuery.isBlank()) return true
+        val q = searchQuery.lowercase()
+        if (group.title.lowercase().contains(q)) return true
+        return group.keys.any { key ->
+            key.contains(q, ignoreCase = true) ||
+                (fieldLabels[key]?.contains(q, ignoreCase = true) == true)
         }
     }
 
@@ -426,7 +576,11 @@ class MainActivity : Activity() {
                 val idx = tag.removePrefix("header_").toIntOrNull() ?: continue
                 val content = child.getChildAt(1) as? LinearLayout ?: continue
                 val group = groups[idx]
-                val isExpanded = idx in expandedGroups
+                val matches = groupMatches(group)
+                // Hide non-matching groups while searching; matching groups auto-expand.
+                child.visibility = if (matches) View.VISIBLE else View.GONE
+                if (!matches) continue
+                val isExpanded = idx in expandedGroups || searchQuery.isNotBlank()
 
                 headerText.text = if (isExpanded) "▾  ${group.title}" else "▸  ${group.title}"
                 content.visibility = if (isExpanded) View.VISIBLE else View.GONE
@@ -445,7 +599,7 @@ class MainActivity : Activity() {
             text = "Scope target apps in LSPosed to spoof them.\nAfter saving, restart the target app to apply."
             textSize = 12f
             gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#9CA3AF"))
+            setTextColor(faintColor())
             setPadding(dp(16), dp(12), dp(16), dp(8))
         }
     }
@@ -455,9 +609,23 @@ class MainActivity : Activity() {
     private fun loadValues() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         fieldKeys.forEach { values[it] = prefs.getString(it, "").orEmpty() }
+        dirty = false
     }
 
     private fun randomizeAll() {
+        if (dirty) {
+            AlertDialog.Builder(this)
+                .setTitle("Discard unsaved edits?")
+                .setMessage("Randomizing replaces the values you edited but haven't saved.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Randomize") { _, _ -> doRandomize() }
+                .show()
+        } else {
+            doRandomize()
+        }
+    }
+
+    private fun doRandomize() {
         // Brief crossfade on the profile card for visual feedback
         val deviceCard = summaryText.parent?.parent as? ViewGroup
         deviceCard?.animate()?.alpha(0.3f)?.setDuration(120)?.withEndAction {
@@ -475,6 +643,7 @@ class MainActivity : Activity() {
             refreshSummary()
         }
         Toast.makeText(this, "New profile generated.", Toast.LENGTH_SHORT).show()
+        dirty = true
     }
 
     private fun refreshSummary() {
@@ -499,6 +668,18 @@ class MainActivity : Activity() {
     // ========== Save ==========
 
     private fun saveConfig(saveButton: Button? = null) {
+        val invalid = fieldKeys.mapNotNull { key ->
+            validateField(key, values[key].orEmpty())?.let { key to it }
+        }
+        if (invalid.isNotEmpty()) {
+            val names = invalid.take(3).joinToString(", ") { (key, _) -> fieldLabels[key] ?: key }
+            val more = if (invalid.size > 3) " +${invalid.size - 3} more" else ""
+            Toast.makeText(this, "Fix invalid fields: $names$more", Toast.LENGTH_LONG).show()
+            val firstKey = invalid.first().first
+            groups.forEachIndexed { index, group -> if (firstKey in group.keys) expandedGroups.add(index) }
+            refreshAccordion()
+            return
+        }
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         editor.putBoolean("setting_debug_log", debugLogging.isChecked)
@@ -507,6 +688,7 @@ class MainActivity : Activity() {
 
         val saved = editor.commit()
         if (saved) {
+            dirty = false
             logToLogcat("Config saved via commit()")
         } else {
             logToLogcat("Config save failed via commit()")
@@ -545,7 +727,26 @@ class MainActivity : Activity() {
 
     // ========== Soft Reboot ==========
 
+    private fun hasRoot(): Boolean = try {
+        Runtime.getRuntime().exec("which su").waitFor() == 0
+    } catch (_: Exception) {
+        false
+    }
+
     private fun softReboot() {
+        if (!hasRoot()) {
+            Toast.makeText(this, "Root (su) not available — soft reboot needs root.", Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Soft reboot?")
+            .setMessage("This restarts the Android runtime (system_server). The screen will go black for ~15s. Save your work in other apps first.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Reboot") { _, _ -> doSoftReboot() }
+            .show()
+    }
+
+    private fun doSoftReboot() {
         try {
             val process = Runtime.getRuntime().exec("su")
             val os = process.outputStream
@@ -565,7 +766,7 @@ class MainActivity : Activity() {
     private fun panel(): LinearLayout {
         return LinearLayout(this).apply {
             setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = rounded(Color.WHITE, 14)
+            background = rounded(panelColor(), 14)
             elevation = dp(1).toFloat()
         }
     }
@@ -575,7 +776,7 @@ class MainActivity : Activity() {
             this.text = text
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#1F2937"))
+            setTextColor(textPrimary())
             setPadding(0, 0, 0, dp(12))
         }
     }
@@ -594,7 +795,7 @@ class MainActivity : Activity() {
 
     private fun divider(): View {
         return View(this).apply {
-            background = GradientDrawable().apply { setColor(Color.parseColor("#E5E7EB")) }
+            background = GradientDrawable().apply { setColor(dividerColor()) }
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
                 topMargin = dp(6)
                 bottomMargin = dp(6)

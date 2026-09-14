@@ -3,6 +3,18 @@ plugins {
     id "org.jetbrains.kotlin.android" version "1.9.10"
 }
 
+// Release signing secrets are NEVER committed.
+// Provide via DevicePrivacyLab/local.properties (see local.properties.example)
+// or via RELEASE_STORE_PASSWORD / RELEASE_KEY_PASSWORD / RELEASE_KEY_ALIAS env vars.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file("local.properties")
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def releaseStorePassword = keystoreProps.getProperty("RELEASE_STORE_PASSWORD", System.getenv("RELEASE_STORE_PASSWORD") ?: "")
+def releaseKeyPassword = keystoreProps.getProperty("RELEASE_KEY_PASSWORD", System.getenv("RELEASE_KEY_PASSWORD") ?: "")
+def releaseKeyAlias = keystoreProps.getProperty("RELEASE_KEY_ALIAS", System.getenv("RELEASE_KEY_ALIAS") ?: "deviceprivacylab")
+
 android {
     namespace "dev.codex.deviceprivy"
     compileSdk 35
@@ -21,16 +33,21 @@ android {
 
     signingConfigs {
         release {
+            // Secrets come from local.properties or env vars — never committed.
+            // See local.properties.example. Fresh clones without the keystore
+            // build unsigned release APKs until signing is configured.
             storeFile file("../release-key.jks")
-            storePassword "deviceprivacylab"
-            keyAlias "deviceprivacylab"
-            keyPassword "deviceprivacylab"
+            storePassword releaseStorePassword
+            keyAlias releaseKeyAlias
+            keyPassword releaseKeyPassword
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (file("../release-key.jks").exists() && releaseStorePassword != "" && releaseKeyPassword != "") {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             shrinkResources false
             debuggable false
