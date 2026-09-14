@@ -39,7 +39,7 @@ class MainActivity : Activity() {
         )),
         FieldGroup("Android IDs", listOf("android_id", "gsf_id", "aaid", "media_drm_id")),
         FieldGroup("Telephony", listOf(
-            "imei", "meid", "sim_serial", "sim_sub_id", "mobile_no",
+            "imei", "meid", "imsi", "sim_serial", "sim_sub_id", "mobile_no",
             "sim_operator", "network_operator", "country_iso"
         )),
         FieldGroup("Network", listOf("mac_address", "mac_bssid", "mac_ssid", "bluetooth_mac", "ip_address")),
@@ -57,7 +57,7 @@ class MainActivity : Activity() {
         "android_version" to "Android Version", "fingerprint" to "Fingerprint",
         "hardware_id" to "Hardware ID", "android_id" to "Android ID",
         "gsf_id" to "GSF ID", "aaid" to "Advertising ID", "media_drm_id" to "Media DRM ID",
-        "imei" to "IMEI", "meid" to "MEID", "sim_serial" to "SIM Serial",
+        "imei" to "IMEI", "meid" to "MEID", "imsi" to "IMSI", "sim_serial" to "SIM Serial",
         "sim_sub_id" to "SIM Sub ID", "mobile_no" to "Phone Number",
         "sim_operator" to "SIM Operator", "network_operator" to "Network Operator",
         "country_iso" to "Country ISO", "mac_address" to "WiFi MAC",
@@ -76,13 +76,26 @@ class MainActivity : Activity() {
     private val inputs = mutableMapOf<String, EditText>()
     private lateinit var debugLogging: CheckBox
     private lateinit var hideSelf: CheckBox
+    private val hookBoxes = mutableMapOf<String, CheckBox>()
+
+    private val hookGroups = listOf(
+        "hook_device" to "Device identity (Build fields)",
+        "hook_telephony" to "Telephony & SIM",
+        "hook_network" to "Network (Wi-Fi, DHCP, Bluetooth)",
+        "hook_location" to "Location, locale & timezone",
+        "hook_display" to "Display, GPU & battery",
+        "hook_ids" to "Android IDs (Android ID, AAID, DRM)",
+        "hook_ua" to "User-Agent & Java properties",
+        "hook_stealth" to "Anti-detection & self-hiding"
+    )
     private lateinit var statusText: TextView
     private lateinit var summaryText: TextView
     private lateinit var accordionContainer: LinearLayout
     private val expandedGroups = mutableSetOf(0) // first group open by default
     private var searchQuery = ""
     private var dirty = false // true once the user edits anything since load/save
-    private val fieldErrors = mutableMapOf<String, TextView>()
+    private val lockedKeys = mutableSetOf<String>() // fields Randomize must not touch
+    private val historyPrefsName = "device_privy_history" // separate file: keeps snapshots out of the hook data path
 
     // ========== Dark-mode aware palette ==========
 
@@ -100,44 +113,11 @@ class MainActivity : Activity() {
     private fun textHint() = c("#6B7280", "#9CA3AF")
     private fun faintColor() = c("#9CA3AF", "#6B7280")
     private fun dividerColor() = c("#E5E7EB", "#374151")
-    private fun badgeBg() = c("#E5E7EB", "#374151")
 
     // ========== Validation ==========
 
-    private val macRegex = Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
-    private val ipv4Regex = Regex("^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$")
-    private val hex16Regex = Regex("^[0-9a-fA-F]{16}$")
-
-    /** Returns an error message for a non-blank value, or null when valid. Blank = allowed (falls back). */
-    private fun validateField(key: String, raw: String): String? {
-        val v = raw.trim()
-        if (v.isEmpty()) return null
-        return when (key) {
-            "imei" -> if (!v.matches(Regex("^\\d{15}$"))) "Must be 15 digits" else null
-            "meid" -> if (!v.matches(Regex("^\\d{14}$"))) "Must be 14 digits" else null
-            "mac_address", "mac_bssid", "bluetooth_mac" ->
-                if (!v.matches(macRegex)) "Format AA:BB:CC:DD:EE:FF" else null
-            "ip_address" -> if (!v.matches(ipv4Regex)) "Invalid IPv4 address" else null
-            "latitude" -> {
-                val d = v.toDoubleOrNull() ?: return "Must be a number"
-                if (d < -90 || d > 90) "Range -90 … 90" else null
-            }
-            "longitude" -> {
-                val d = v.toDoubleOrNull() ?: return "Must be a number"
-                if (d < -180 || d > 180) "Range -180 … 180" else null
-            }
-            "screen_width", "screen_height", "screen_density" ->
-                if (v.toIntOrNull()?.takeIf { it > 0 } == null) "Must be a positive number" else null
-            "battery_level" -> {
-                val n = v.toIntOrNull() ?: return "Must be 0 … 100"
-                if (n < 0 || n > 100) "Must be 0 … 100" else null
-            }
-            "android_id", "gsf_id" ->
-                if (!v.matches(hex16Regex)) "Must be 16 hex chars" else null
-            "mobile_no" -> if (!v.matches(Regex("^\\+\\d{7,15}$"))) "Format +<country><number>" else null
-            else -> null
-        }
-    }
+    /** Thin delegate — rules live in FieldValidators (pure Kotlin, unit-tested). */
+    private fun validateField(key: String, raw: String): String? = FieldValidators.validate(key, raw)
 
     // ========== Status Detection ==========
 
@@ -180,6 +160,8 @@ class MainActivity : Activity() {
         root.addView(buildActions())
         root.addView(spacer(12))
         root.addView(buildDeviceCard())
+        root.addView(spacer(12))
+        root.addView(buildHistory())
         root.addView(spacer(12))
         root.addView(buildSettings())
         root.addView(spacer(12))
@@ -377,6 +359,165 @@ class MainActivity : Activity() {
         }
     }
 
+    // ========== Profile History + Export/Import ==========
+
+    private var historyContainer: LinearLayout? = null
+    private val maxHistory = 10
+
+    private fun buildHistory(): View {
+        return panel().apply {
+            orientation = LinearLayout.VERTICAL
+            addView(sectionTitle("Profile History"))
+
+            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(actionButton("\uD83D\uDCE4 Export", Color.parseColor("#2563EB")) {
+                exportProfile()
+            }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
+            row.addView(actionButton("\uD83D\uDCE5 Import", Color.parseColor("#7C3AED")) {
+                importProfileDialog()
+            }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(8) })
+            addView(row)
+            addView(spacer(10))
+
+            historyContainer = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            addView(historyContainer)
+            refreshHistory()
+        }
+    }
+
+    private fun snapshotToJson(): org.json.JSONObject {
+        val o = org.json.JSONObject()
+        for (k in fieldKeys) o.put(k, values[k].orEmpty())
+        return o
+    }
+
+    private fun pushHistory() {
+        try {
+            val prefs = getSharedPreferences(historyPrefsName, Context.MODE_PRIVATE)
+            val arr = try {
+                org.json.JSONArray(prefs.getString("profile_history", "[]"))
+            } catch (_: Exception) { org.json.JSONArray() }
+            val entry = org.json.JSONObject()
+            entry.put("ts", System.currentTimeMillis())
+            entry.put("values", snapshotToJson())
+            arr.put(entry)
+            while (arr.length() > maxHistory) arr.remove(0)
+            prefs.edit().putString("profile_history", arr.toString()).apply()
+        } catch (_: Exception) {}
+        refreshHistory()
+    }
+
+    private fun readHistory(): List<Pair<Long, Map<String, String>>> {
+        val out = mutableListOf<Pair<Long, Map<String, String>>>()
+        try {
+            val raw = getSharedPreferences(historyPrefsName, Context.MODE_PRIVATE)
+                .getString("profile_history", "[]").orEmpty()
+            val arr = org.json.JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val e = arr.optJSONObject(i) ?: continue
+                val v = e.optJSONObject("values") ?: continue
+                val map = mutableMapOf<String, String>()
+                for (k in fieldKeys) map[k] = v.optString(k, "")
+                out.add(e.optLong("ts", 0L) to map)
+            }
+        } catch (_: Exception) {}
+        return out.reversed() // newest first
+    }
+
+    private fun refreshHistory() {
+        val container = historyContainer ?: return
+        container.removeAllViews()
+        val entries = readHistory()
+        if (entries.isEmpty()) {
+            container.addView(TextView(this).apply {
+                text = "No saved profiles yet — press Save to record one."
+                textSize = 12f
+                setTextColor(faintColor())
+            })
+            return
+        }
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+        for ((ts, map) in entries) {
+            val mfr = map["manufacturer"]?.takeIf { it.isNotBlank() } ?: "Unknown"
+            val model = map["model"]?.takeIf { it.isNotBlank() } ?: "device"
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            row.addView(TextView(this).apply {
+                text = "${fmt.format(java.util.Date(ts))}  •  $mfr $model"
+                textSize = 13f
+                setTextColor(textSecondary())
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(Button(this).apply {
+                text = "Restore"
+                textSize = 12f
+                setAllCaps(false)
+                setTextColor(Color.WHITE)
+                background = rounded(Color.parseColor("#2563EB"), 8)
+                setOnClickListener {
+                    values.putAll(map)
+                    for ((k, et) in inputs) et.setText(map[k].orEmpty())
+                    dirty = true
+                    refreshSummary()
+                    Toast.makeText(this@MainActivity, "Profile restored — press Save to apply.", Toast.LENGTH_SHORT).show()
+                }
+            })
+            container.addView(row)
+        }
+    }
+
+    private fun exportProfile() {
+        try {
+            val json = snapshotToJson().toString(2)
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("deviceprivy-profile", json))
+            Toast.makeText(this, "Profile JSON copied to clipboard.", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun importProfileDialog() {
+        val input = EditText(this).apply {
+            hint = "Paste profile JSON here"
+            textSize = 13f
+            setTextColor(textPrimary())
+            setHintTextColor(faintColor())
+            background = rounded(inputColor(), 8)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            minLines = 6
+            gravity = Gravity.TOP
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Import profile")
+            .setView(input)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Import") { _, _ ->
+                try {
+                    val o = org.json.JSONObject(input.text.toString())
+                    var count = 0
+                    for (k in fieldKeys) {
+                        if (o.has(k)) { values[k] = o.optString(k, ""); count++ }
+                    }
+                    if (count == 0) {
+                        Toast.makeText(this, "No known fields found in JSON.", Toast.LENGTH_LONG).show()
+                        return@setPositiveButton
+                    }
+                    for ((k, et) in inputs) et.setText(values[k].orEmpty())
+                    dirty = true
+                    refreshSummary()
+                    Toast.makeText(this, "Imported $count fields — press Save to apply.", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Invalid JSON: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            .show()
+    }
+
     // ========== Settings ==========
 
     private fun buildSettings(): View {
@@ -401,6 +542,26 @@ class MainActivity : Activity() {
             }
             addView(debugLogging)
             addView(hideSelf)
+
+            addView(TextView(this@MainActivity).apply {
+                text = "Hook categories (restart target apps after changing)"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(textHint())
+                setPadding(0, dp(12), 0, dp(4))
+            })
+            hookBoxes.clear()
+            for ((key, label) in hookGroups) {
+                val box = CheckBox(this@MainActivity).apply {
+                    text = label
+                    textSize = 14f
+                    setTextColor(textSecondary())
+                    isChecked = prefs.getBoolean(key, true)
+                    setPadding(0, dp(4), 0, dp(4))
+                }
+                hookBoxes[key] = box
+                addView(box)
+            }
         }
     }
 
@@ -501,20 +662,45 @@ class MainActivity : Activity() {
     private fun populateFields(container: LinearLayout, group: FieldGroup) {
         group.keys.forEach { key ->
             val label = fieldLabels[key] ?: key.replace("_", " ").replaceFirstChar { it.uppercase() }
-            container.addView(TextView(this).apply {
+            val labelRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(10), 0, dp(4))
+            }
+            labelRow.addView(TextView(this).apply {
                 text = label
                 textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(textHint())
-                setPadding(0, dp(10), 0, dp(4))
-            })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val lockView = TextView(this).apply {
+                text = if (key in lockedKeys) "\uD83D\uDD12" else "\uD83D\uDD13"
+                contentDescription = if (key in lockedKeys) "Unlock $label" else "Lock $label"
+                textSize = 14f
+                setPadding(dp(8), dp(2), dp(8), dp(2))
+                isClickable = true
+                isFocusable = true
+            }
+            lockView.setOnClickListener {
+                if (key in lockedKeys) lockedKeys.remove(key) else lockedKeys.add(key)
+                val locked = key in lockedKeys
+                lockView.text = if (locked) "\uD83D\uDD12" else "\uD83D\uDD13"
+                lockView.contentDescription = if (locked) "Unlock $label" else "Lock $label"
+                persistLocks()
+                Toast.makeText(
+                    this,
+                    if (locked) "$label locked — Randomize will keep it" else "$label unlocked",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            labelRow.addView(lockView)
+            container.addView(labelRow)
             val errorView = TextView(this).apply {
                 textSize = 11f
                 setTextColor(Color.parseColor("#DC2626"))
                 setPadding(0, dp(2), 0, 0)
                 visibility = View.GONE
             }
-            fieldErrors[key] = errorView
             container.addView(EditText(this).apply {
                 setText(values[key].orEmpty())
                 setSingleLine()
@@ -547,7 +733,7 @@ class MainActivity : Activity() {
 
     private fun inputTypeFor(key: String): Int = when (key) {
         "screen_width", "screen_height", "screen_density", "battery_level", "battery_scale",
-        "imei", "meid", "sim_sub_id" -> InputType.TYPE_CLASS_NUMBER
+        "imei", "meid", "imsi", "sim_sub_id" -> InputType.TYPE_CLASS_NUMBER
         "latitude", "longitude" ->
             InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
         "mobile_no" -> InputType.TYPE_CLASS_PHONE
@@ -609,7 +795,17 @@ class MainActivity : Activity() {
     private fun loadValues() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         fieldKeys.forEach { values[it] = prefs.getString(it, "").orEmpty() }
+        lockedKeys.clear()
+        prefs.getString("locked_fields", "").orEmpty()
+            .split(",").map { it.trim() }.filter { it in fieldKeys }
+            .forEach { lockedKeys.add(it) }
         dirty = false
+    }
+
+    private fun persistLocks() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("locked_fields", lockedKeys.sorted().joinToString(","))
+            .apply()
     }
 
     private fun randomizeAll() {
@@ -626,17 +822,21 @@ class MainActivity : Activity() {
     }
 
     private fun doRandomize() {
+        // Locked fields survive: snapshot first, restore after generating.
+        val preserved = lockedKeys.associateWith { values[it].orEmpty() }
+        val fresh = FakeData.generateAll().toMutableMap()
+        for ((k, v) in preserved) fresh[k] = v
         // Brief crossfade on the profile card for visual feedback
         val deviceCard = summaryText.parent?.parent as? ViewGroup
         deviceCard?.animate()?.alpha(0.3f)?.setDuration(120)?.withEndAction {
-            values.putAll(FakeData.generateAll())
+            values.putAll(fresh)
             for ((key, editText) in inputs) {
                 editText.setText(values[key].orEmpty())
             }
             refreshSummary()
             deviceCard.animate().alpha(1f).setDuration(200).start()
         }?.start() ?: run {
-            values.putAll(FakeData.generateAll())
+            values.putAll(fresh)
             for ((key, editText) in inputs) {
                 editText.setText(values[key].orEmpty())
             }
@@ -684,11 +884,13 @@ class MainActivity : Activity() {
         val editor = prefs.edit()
         editor.putBoolean("setting_debug_log", debugLogging.isChecked)
         editor.putBoolean("setting_hide_self", hideSelf.isChecked)
+        for ((key, box) in hookBoxes) editor.putBoolean(key, box.isChecked)
         fieldKeys.forEach { editor.putString(it, values[it].orEmpty().trim()) }
 
         val saved = editor.commit()
         if (saved) {
             dirty = false
+            pushHistory()
             logToLogcat("Config saved via commit()")
         } else {
             logToLogcat("Config save failed via commit()")

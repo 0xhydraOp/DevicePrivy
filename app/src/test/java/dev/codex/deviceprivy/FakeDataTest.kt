@@ -31,7 +31,7 @@ class FakeDataTest {
     fun generateAllReturnsExpectedKeys() {
         val data = FakeData.generateAll()
         val expectedKeys = listOf(
-            "imei", "meid", "gsf_id", "hardware_id", "mac_address", 
+            "imei", "meid", "imsi", "gsf_id", "hardware_id", "mac_address", 
             "mac_bssid", "mac_ssid", "bluetooth_mac", "android_id",
             "sim_serial", "sim_sub_id", "mobile_no", "media_drm_id",
             "sim_operator", "network_operator", "ip_address", "manufacturer",
@@ -52,6 +52,15 @@ class FakeDataTest {
             val data = FakeData.generateAll()
 
             assertTrue(data.getValue("imei").matches(Regex("\\d{15}")))
+            assertTrue(data.getValue("imsi").matches(Regex("\\d{15}")))
+            assertTrue(
+                "IMSI should start with MCC+MNC",
+                data.getValue("imsi").startsWith(data.getValue("network_operator"))
+            )
+            assertFalse(
+                "IMSI must differ from SIM serial",
+                data.getValue("imsi") == data.getValue("sim_serial")
+            )
             assertTrue(data.getValue("meid").matches(Regex("\\d{14}")))
             assertTrue(data.getValue("gsf_id").matches(Regex("[0-9a-f]{16}")))
             assertTrue(data.getValue("hardware_id").matches(Regex("[0-9a-f]{16}")))
@@ -77,6 +86,15 @@ class FakeDataTest {
 
             assertTrue(data.getValue("latitude").toDouble() in -90.0..90.0)
             assertTrue(data.getValue("longitude").toDouble() in -180.0..180.0)
+            val lat = data.getValue("latitude").toDouble()
+            val lon = data.getValue("longitude").toDouble()
+            when (data.getValue("country_iso")) {
+                "us" -> { assertTrue(lat in 25.0..50.0); assertTrue(lon in -125.0..-70.0) }
+                "in" -> { assertTrue(lat in 8.0..35.0); assertTrue(lon in 68.0..90.0) }
+                "gb" -> { assertTrue(lat in 50.0..59.0); assertTrue(lon in -5.0..2.0) }
+                "fr" -> { assertTrue(lat in 42.0..51.0); assertTrue(lon in -2.0..8.0) }
+                "au" -> { assertTrue(lat in -40.0..-12.0); assertTrue(lon in 113.0..153.0) }
+            }
             assertTrue(data.getValue("screen_width").toInt() > 0)
             assertTrue(data.getValue("screen_height").toInt() > 0)
             assertTrue(data.getValue("screen_density").toInt() > 0)
@@ -92,31 +110,36 @@ class FakeDataTest {
                 "us" -> {
                     assertTrue(data.getValue("network_operator") in setOf("311480", "310260", "310410"))
                     assertEquals("en-US", data.getValue("locale"))
-                    assertTrue(data.getValue("mobile_no").startsWith("+1"))
+                    assertTrue(data.getValue("mobile_no").matches(Regex("\\+[1-9]\\d{10}")))
+                    assertEquals(12, data.getValue("mobile_no").length)
                     assertTrue(data.getValue("timezone").startsWith("America/"))
                 }
                 "in" -> {
                     assertTrue(data.getValue("network_operator") in setOf("405840", "40410"))
                     assertEquals("en-IN", data.getValue("locale"))
-                    assertTrue(data.getValue("mobile_no").startsWith("+91"))
+                    assertTrue(data.getValue("mobile_no").matches(Regex("\\+91[1-9]\\d{9}")))
+                    assertEquals(13, data.getValue("mobile_no").length)
                     assertEquals("Asia/Kolkata", data.getValue("timezone"))
                 }
                 "gb" -> {
                     assertEquals("23415", data.getValue("network_operator"))
                     assertEquals("en-GB", data.getValue("locale"))
-                    assertTrue(data.getValue("mobile_no").startsWith("+44"))
+                    assertTrue(data.getValue("mobile_no").matches(Regex("\\+44[1-9]\\d{9}")))
+                    assertEquals(13, data.getValue("mobile_no").length)
                     assertEquals("Europe/London", data.getValue("timezone"))
                 }
                 "fr" -> {
                     assertEquals("20801", data.getValue("network_operator"))
                     assertEquals("fr-FR", data.getValue("locale"))
-                    assertTrue(data.getValue("mobile_no").startsWith("+33"))
+                    assertTrue(data.getValue("mobile_no").matches(Regex("\\+33[1-9]\\d{8}")))
+                    assertEquals(12, data.getValue("mobile_no").length)
                     assertEquals("Europe/Paris", data.getValue("timezone"))
                 }
                 "au" -> {
                     assertEquals("50501", data.getValue("network_operator"))
                     assertEquals("en-AU", data.getValue("locale"))
-                    assertTrue(data.getValue("mobile_no").startsWith("+61"))
+                    assertTrue(data.getValue("mobile_no").matches(Regex("\\+61[1-9]\\d{8}")))
+                    assertEquals(12, data.getValue("mobile_no").length)
                     assertEquals("Australia/Sydney", data.getValue("timezone"))
                 }
                 else -> fail("Unexpected country ISO: ${data.getValue("country_iso")}")

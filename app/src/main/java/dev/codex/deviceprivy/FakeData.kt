@@ -4,11 +4,17 @@ import java.util.UUID
 import kotlin.random.Random
 
 object FakeData {
+    // Bump when desktop Chrome moves on — keeps spoofed UA out of the "ancient browser" bucket.
+    const val CHROME_VERSION = "139.0.0.0"
+
     private data class CarrierProfile(
         val name: String,
         val mccMnc: String,
         val countryIso: String,
         val phonePrefix: String,
+        val nationalNumberLength: Int,
+        val cityLat: Double,
+        val cityLon: Double,
         val locale: String,
         val timezone: String
     )
@@ -23,14 +29,14 @@ object FakeData {
     )
 
     private val carriers = listOf(
-        CarrierProfile("Verizon", "311480", "us", "+1", "en-US", "America/New_York"),
-        CarrierProfile("T-Mobile", "310260", "us", "+1", "en-US", "America/Los_Angeles"),
-        CarrierProfile("AT&T", "310410", "us", "+1", "en-US", "America/Chicago"),
-        CarrierProfile("Jio", "405840", "in", "+91", "en-IN", "Asia/Kolkata"),
-        CarrierProfile("Airtel", "40410", "in", "+91", "en-IN", "Asia/Kolkata"),
-        CarrierProfile("Vodafone", "23415", "gb", "+44", "en-GB", "Europe/London"),
-        CarrierProfile("Orange", "20801", "fr", "+33", "fr-FR", "Europe/Paris"),
-        CarrierProfile("Telstra", "50501", "au", "+61", "en-AU", "Australia/Sydney")
+        CarrierProfile("Verizon", "311480", "us", "+1", 10, 40.7128, -74.0060, "en-US", "America/New_York"),
+        CarrierProfile("T-Mobile", "310260", "us", "+1", 10, 34.0522, -118.2437, "en-US", "America/Los_Angeles"),
+        CarrierProfile("AT&T", "310410", "us", "+1", 10, 32.7767, -96.7970, "en-US", "America/Chicago"),
+        CarrierProfile("Jio", "405840", "in", "+91", 10, 19.0760, 72.8777, "en-IN", "Asia/Kolkata"),
+        CarrierProfile("Airtel", "40410", "in", "+91", 10, 28.6139, 77.2090, "en-IN", "Asia/Kolkata"),
+        CarrierProfile("Vodafone", "23415", "gb", "+44", 10, 51.5074, -0.1278, "en-GB", "Europe/London"),
+        CarrierProfile("Orange", "20801", "fr", "+33", 9, 48.8566, 2.3522, "fr-FR", "Europe/Paris"),
+        CarrierProfile("Telstra", "50501", "au", "+61", 9, -33.8688, 151.2093, "en-AU", "Australia/Sydney")
     )
 
     // ========== Randomized Hardware Pools ==========
@@ -123,10 +129,24 @@ object FakeData {
     }
     fun randomSimSerial(): String = buildString { repeat(20) { append((0..9).random()) } }
     fun randomSimSubId(): String = (1..9999).random().toString()
-    fun randomMobileNo(prefix: String = "+1"): String = buildString {
+    fun randomMobileNo(prefix: String = "+1", nationalLength: Int = 10): String = buildString {
         append(prefix)
-        repeat(10) { append((0..9).random()) }
+        // First national digit is never 0 (valid numbering plans)
+        append((1..9).random())
+        repeat(nationalLength - 1) { append((0..9).random()) }
     }
+
+    /** IMSI = MCC+MNC prefix + random MSIN, always 15 digits total. */
+    fun randomImsi(mccMnc: String): String = buildString {
+        append(mccMnc)
+        repeat((15 - mccMnc.length).coerceAtLeast(0)) { append((0..9).random()) }
+    }
+
+    /** City-centred coordinates with a small jitter — never oceans/poles. */
+    fun randomNearbyLat(base: Double, spread: Double = 0.4): String =
+        String.format(java.util.Locale.US, "%.6f", (base + Random.nextDouble(-spread, spread)).coerceIn(-90.0, 90.0))
+    fun randomNearbyLon(base: Double, spread: Double = 0.4): String =
+        String.format(java.util.Locale.US, "%.6f", (base + Random.nextDouble(-spread, spread)).coerceIn(-180.0, 180.0))
     fun randomMediaDrmId(): String = UUID.randomUUID().toString()
     fun randomSimOperator(): String = listOf("T-Mobile", "Verizon", "AT&T", "Vodafone", "Orange", "Jio", "Airtel", "O2").random()
     fun randomMccMnc(): String = listOf("310410", "311480", "23415", "20404", "50501", "40410", "405840").random()
@@ -176,6 +196,7 @@ object FakeData {
         return mapOf(
             "imei" to generateValidIMEI(),
             "meid" to randomMeid(),
+            "imsi" to randomImsi(carrier.mccMnc),
             "gsf_id" to randomGsfId(),
             "hardware_id" to randomHardwareId(),
             "mac_address" to randomMac(),
@@ -185,7 +206,7 @@ object FakeData {
             "android_id" to randomAndroidId(),
             "sim_serial" to randomSimSerial(),
             "sim_sub_id" to randomSimSubId(),
-            "mobile_no" to randomMobileNo(carrier.phonePrefix),
+            "mobile_no" to randomMobileNo(carrier.phonePrefix, carrier.nationalNumberLength),
             "media_drm_id" to randomMediaDrmId(),
             "sim_operator" to carrier.name,
             "network_operator" to carrier.mccMnc,
@@ -204,12 +225,12 @@ object FakeData {
             "android_version" to androidVersion,
             "aaid" to randomAaid(),
             "fingerprint" to randomFingerprint(device, androidVersion, buildId),
-            "latitude" to randomLat(),
-            "longitude" to randomLon(),
+            "latitude" to randomNearbyLat(carrier.cityLat),
+            "longitude" to randomNearbyLon(carrier.cityLon),
             "screen_width" to hardware.width,
             "screen_height" to hardware.height,
             "screen_density" to hardware.density,
-            "user_agent" to "Mozilla/5.0 (Linux; Android $androidVersion; ${device.model} Build/$buildId) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            "user_agent" to "Mozilla/5.0 (Linux; Android $androidVersion; ${device.model} Build/$buildId) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$CHROME_VERSION Mobile Safari/537.36",
             "gl_renderer" to hardware.glRenderer,
             "gl_vendor" to hardware.glVendor,
             "battery_level" to randomBatteryLevel(),

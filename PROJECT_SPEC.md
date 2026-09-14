@@ -1,4 +1,4 @@
-# Project Specification: DevicePrivy v3.7.6-SHIELD
+# Project Specification: DevicePrivy v3.8.5-FIX
 
 ## Project Overview
 DevicePrivy is an advanced Android privacy tool implemented as an LSPosed/Xposed module. It allows users to intercept and spoof sensitive device identifiers at the system API level, protecting user privacy and enabling advanced anti-detection testing.
@@ -89,8 +89,8 @@ DevicePrivy is an advanced Android privacy tool implemented as an LSPosed/Xposed
 - Debug logging toggle, self-hiding toggle
 
 ## Build Status
-- **Current Version**: v3.7.6-SHIELD
-- **Version Code**: `49`
+- **Current Version**: v3.8.5-FIX
+- **Version Code**: `57`
 - **Last Build**: 2026-05-14 — BUILD SUCCESSFUL, 0 errors, 1 minor warning (unchecked Consumer cast)
 - **APKs**: `app/build/outputs/apk/debug/app-debug.apk` / `app/build/outputs/apk/release/app-release.apk`
 
@@ -103,6 +103,13 @@ DevicePrivy is an advanced Android privacy tool implemented as an LSPosed/Xposed
 - **Crashes**: 0 — crash-safe (no Unsafe, no hookAllMethods, all hooks in try-catch)
 
 ## Version History
+
+### v3.8.5-FIX — IMSI + consistency + locks/history/toggles + hook-module split
+- `getSubscriberId` serves a dedicated `imsi` value (was: SIM serial duplicate); IMSI generated as MCC+MNC+MSIN
+- City-based lat/lon per carrier, per-country phone lengths, `CHROME_VERSION` constant in UA
+- Field locks, profile history (10) with restore, export/import via clipboard JSON, 8 hook-category toggles
+- XposedEntry split into Hooks{Device,Telephony,Network,Ids,Location,Hardware,Stealth}.kt; unified sensor vendors
+- FieldValidators extracted + unit-tested; CI workflow runs assembleDebug + unit tests
 
 ### v3.7.6-SHIELD — DHCP spoofing + PhoneStateListener + /proc filters
 - **WifiManager.getDhcpInfo()** hook: gateway, DNS, netmask, DHCP server all spoofed

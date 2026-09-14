@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.8.5-FIX (2026-09-15)
+- IMSI fix: new `imsi` field (generator + UI + validation); `getSubscriberId` remapped off `sim_serial`
+- Consistency: city-based lat/lon per carrier, per-country phone lengths, `CHROME_VERSION` constant
+- UI: field locks for Randomize, profile history (last 10) with restore, export/import via clipboard JSON
+- Hook category toggles: 8 switches (device/network/location/stealth…), missing key defaults to enabled
+- Refactor: XposedEntry split into 7 hook modules + shared helpers; sensor vendor mapping unified
+- Tests: FieldValidators extracted (pure Kotlin) + FieldValidatorsTest; FakeDataTest covers IMSI/phone/geo
+- CI: GitHub Actions workflow (assembleDebug + unit tests)
+- VersionCode: 57
+
 ## v3.8.0-FINAL (2026-05-15)
 - Final code review: 0 errors, 0 warnings, 0 crashes on scoped app
 - Cross-process data bridge: setprop via su from main zygote to SystemProperties

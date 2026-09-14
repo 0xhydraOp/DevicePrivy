@@ -1,6 +1,6 @@
-# DevicePrivy v3.8.0-FINAL
+# DevicePrivy v3.8.5-FIX
 
-Advanced Android privacy tool — LSPosed/Xposed module that spoofs **45+ device identifiers** at the system API level.
+Advanced Android privacy tool — LSPosed/Xposed module that spoofs **46+ device identifiers** at the system API level.
 
 ## How It Works
 
